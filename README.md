@@ -1,7 +1,8 @@
 # Fishing Info
 Displays info about the current fish you're reeling in.
 
-Addon made for Wings private server with ashita.
+Addon made by for Wings private server with ashita by InnLumin.
+Updated by Vavoom for Ashita V4.XX.
 
 # Images
 ![](images/Picture1.png)
@@ -13,15 +14,22 @@ Addon made for Wings private server with ashita.
 2. Unzip the file and place the unzipped file into your addons folder
 3. In game do `/addon load fishinginfo` then `/fi`
 
+# About updates
+Due to Ashita V4 changes settings.json is now in /config/addons/fishinginfo/ and generated on first run
+Changed default visibility to be enabled as HideInactive is enabled by default
+Shift + drag to move or /fi pos x y
+
 # Commands
 ``` 
-/fi help - View all commands
-
-/fi - Toggles on or off
-
-/fi pos - Prints the current position
-
-/fi pos x y - Changes position to  given position
-
-/fi filter - Toggle blocking chat about fish
+/fi - Toggle visibility.
+/fi on - Show the UI.
+/fi off - Hide the UI.
+/fi pos - Print the current UI position.
+/fi pos <x> <y> - Set the UI position.
+/fi filter [on|off] - Toggle or set chat filtering.
+/fi hideinactive [on|off] - Toggle or set hiding while inactive.
+/fi fade [on|off] - Toggle or set fade-out.
+/fi fadedelay <seconds> - Set fade delay.
+/fi fadeduration <seconds> - Set fade duration.
+/fi bgcolor [AARRGGBB] - Show or set the background color.
 ```
