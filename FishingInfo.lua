@@ -1,24 +1,27 @@
 addon.name = 'FishingInfo'
-addon.author = 'InnLumin, '
-addon.version = '2.0.0'
+addon.author = 'InnLumin'
+addon.version = '2.1.0'
 addon.desc = 'Displays fishing catch and feeling info with sound alerts for Ashita v4.'
+addon.commands = {'/fishinginfo', '/fi'};
 
+--> Services <--
 require('common')
 local fonts = require('fonts')
 local settings = require('settings')
 
+--> Variables <--
 local defaults = T{
     UI = T{
         Font = 'Arial',
         Size = 36,
-        Position = T{ 0, 0 },
+        Position = T{ 100, 100 },
         BackgroundColor = '80000000',
     },
     Colors = T{
         Green = 'FF00FF00',
         Red = 'FFFF0000',
         Yellow = 'FFFFFF00',
-		Brown = 'FF745637',
+        Brown = 'FF745637',
     },
     Sounds = T{
         Hook = T{ Enabled = true, File = 'Hook.wav' },
@@ -34,19 +37,34 @@ local defaults = T{
     },
 }
 
+--> Runtime state variables <--
 local state = {
     Settings = settings.load(defaults),
     Font = nil,
     Active = false,
+    SaveTimer = nil,
+	
+	-- Current display data
     CurrentFish = '',
     CurrentFishColor = 'FFFFFFFF',
     CurrentFeeling = '',
     CurrentFeelingColor = 'FFFFFFFF',
+    
+    -- Fade out logic variables
     FadePending = false,
     FadeStartTime = 0,
     FadeEndTime = 0,
+	
+    -- Render caches to reduce redundant Font UI allocations
+    CachedBackgroundColor = nil,
     LastBackgroundColor = nil,
     LastBackgroundVisible = nil,
+    LastFish = nil,
+    LastFishColor = nil,
+    LastFeeling = nil,
+    LastFeelingColor = nil,
+    LastAlpha = nil,
+    LastVisible = nil,
 }
 
 local hookMessages = T{
@@ -67,6 +85,7 @@ local feelingMessages = T{
     T{ Key = 'Epic catch', Text = 'This strength... You get the sense that you are on the verge of an epic catch!', Color = 'Yellow' },
 }
 
+--> Utility helpers <--
 local function log(message)
     print(string.format('\31\200[\31\05FishingInfo\31\200]\31\130 %s', message))
 end
@@ -96,10 +115,17 @@ local function trim(s)
 end
 
 local function clean_hex_input(value)
-    if value == nil then return nil end
+    if value == nil then
+        return nil
+    end
+
     local c = tostring(value):gsub('^0[xX]', ''):gsub('[^%x]', ''):upper()
-    if #c == 6 then c = 'FF' .. c end
-    if #c == 8 then return c end
+    if #c == 6 then
+        c = 'FF' .. c
+    end
+    if #c == 8 then
+        return c
+    end
     return nil
 end
 
@@ -107,8 +133,10 @@ local function normalize_hex_color(color, fallback)
     return clean_hex_input(color) or clean_hex_input(fallback) or 'FFFFFFFF'
 end
 
-local function hex_to_uint(color, fallback)
-    return tonumber(normalize_hex_color(color, fallback), 16) or 0xFFFFFFFF
+local function invalidate_background_cache()
+    state.CachedBackgroundColor = nil
+    state.LastBackgroundColor = nil
+    state.LastBackgroundVisible = nil
 end
 
 local function get_color(name)
@@ -121,12 +149,25 @@ local function get_color(name)
 end
 
 local function get_background_color()
-    local ui = state.Settings.UI
-    if ui == nil then
-        return '80000000'
+    if state.CachedBackgroundColor ~= nil then
+        return state.CachedBackgroundColor
     end
 
-    return normalize_hex_color(ui.BackgroundColor, '80000000')
+    local ui = state.Settings.UI
+    if ui == nil then
+        state.CachedBackgroundColor = '80000000'
+        return state.CachedBackgroundColor
+    end
+
+    state.CachedBackgroundColor = normalize_hex_color(ui.BackgroundColor, '80000000')
+    return state.CachedBackgroundColor
+end
+
+local function get_background_uint_for_alpha(alpha)
+    local c = get_background_color()
+    local baseAlpha = tonumber(c:sub(1, 2), 16) or 255
+    local scaledAlpha = clamp(math.floor(baseAlpha * clamp(alpha or 255, 0, 255) / 255), 0, 255)
+    return tonumber(string.format('%02X%s', scaledAlpha, c:sub(3)), 16) or 0x00000000
 end
 
 local function with_alpha(color, alpha)
@@ -136,18 +177,11 @@ local function with_alpha(color, alpha)
     return a .. rgb
 end
 
-local function scale_color_alpha(color, scale)
-    local c = normalize_hex_color(color, '80000000')
-    local baseAlpha = tonumber(c:sub(1, 2), 16) or 255
-    local scaledAlpha = clamp(math.floor(baseAlpha * clamp(scale or 255, 0, 255) / 255), 0, 255)
-    return string.format('%02X%s', scaledAlpha, c:sub(3))
-end
-
 local function build_font_settings()
     local pos = state.Settings.UI.Position or T{ 0, 0 }
 
     return T{
-        visible = false,
+        visible = state.Font and state.Font.visible or false,
         font_family = state.Settings.UI.Font or 'Arial',
         font_height = tonumber(state.Settings.UI.Size) or 36,
         color = 0xFFFFFFFF,
@@ -155,12 +189,24 @@ local function build_font_settings()
         position_y = tonumber(pos[2]) or 0,
         background = T{
             visible = true,
-            color = hex_to_uint(get_background_color(), '80000000'),
+            color = get_background_uint_for_alpha(255),
         },
     }
 end
 
+local function invalidate_text_cache()
+    state.LastFish = nil
+    state.LastFishColor = nil
+    state.LastFeeling = nil
+    state.LastFeelingColor = nil
+    state.LastAlpha = nil
+    state.LastVisible = nil
+end
+
 local function apply_font_settings()
+    invalidate_background_cache()
+    invalidate_text_cache()
+
     if state.Font ~= nil then
         state.Font:apply(build_font_settings())
     end
@@ -176,7 +222,7 @@ local function sync_position_from_font()
 end
 
 local function set_font_background(color, visible)
-    if state.Font == nil then
+    if state.Font == nil or state.Font.background == nil then
         return
     end
 
@@ -187,19 +233,14 @@ local function set_font_background(color, visible)
     state.LastBackgroundColor = color
     state.LastBackgroundVisible = visible
 
+    state.Font.background.color = color
+    state.Font.background.visible = visible
+
     pcall(function()
         if state.Font.background ~= nil then
             state.Font.background.color = color
             state.Font.background.visible = visible
         end
-    end)
-
-    pcall(function()
-        state.Font.bg_color = color
-    end)
-
-    pcall(function()
-        state.Font.bg_visible = visible
     end)
 end
 
@@ -216,6 +257,7 @@ local function clear_display()
     state.CurrentFishColor = 'FFFFFFFF'
     state.CurrentFeeling = ''
     state.CurrentFeelingColor = 'FFFFFFFF'
+    invalidate_text_cache()
 end
 
 local function begin_visual_fade()
@@ -224,7 +266,7 @@ local function begin_visual_fade()
     or state.Settings.Fade.Enabled ~= true then
         clear_display()
         return
-end
+    end
 
     local delay = math.max(0, tonumber(state.Settings.Fade.Delay) or 0)
     local duration = math.max(0, tonumber(state.Settings.Fade.Duration) or 0)
@@ -258,7 +300,7 @@ local function play_alert_sound(name)
         return
     end
 
-    local fullpath = string.format('%s\\sounds\\%s', addon.path, sound.File)
+    local fullpath = string.format('%ssounds\\%s', addon.path, sound.File)
     ashita.misc.play_sound(fullpath)
 end
 
@@ -305,19 +347,20 @@ local function set_boolean_setting(current, value)
     return not current
 end
 
+--> Settings and events <--
 settings.register('settings', 'settings_update', function (s)
     if s ~= nil then
         state.Settings = s
     end
 
     apply_font_settings()
-    settings.save()
 end)
 
 ashita.events.register('load', 'fishinginfo_load', function ()
     state.Font = fonts.new(build_font_settings())
     state.Font.text = ''
-    set_font_background(hex_to_uint(get_background_color(), '80000000'), true)
+    set_font_background(get_background_uint_for_alpha(255), true)
+    invalidate_text_cache()
 end)
 
 ashita.events.register('unload', 'fishinginfo_unload', function ()
@@ -330,6 +373,7 @@ ashita.events.register('unload', 'fishinginfo_unload', function ()
     end
 end)
 
+--> Slash command handlers <--
 ashita.events.register('command', 'fishinginfo_command', function (e)
     local args = e.command:args()
     if #args == 0 then
@@ -450,6 +494,7 @@ ashita.events.register('command', 'fishinginfo_command', function (e)
         end
 
         state.Settings.UI.BackgroundColor = normalized
+        invalidate_background_cache()
         apply_font_settings()
         settings.save()
         log(string.format('BackgroundColor set to %s', normalized))
@@ -468,7 +513,7 @@ ashita.events.register('command', 'fishinginfo_command', function (e)
             '/fi fade [on|off] - Toggle or set fade-out.',
             '/fi fadedelay <seconds> - Set fade delay.',
             '/fi fadeduration <seconds> - Set fade duration.',
-            '/fi bgcolor [AARRGGBB] - Show or set the background color.',
+            '/fi bgcolor [AARRGGBB|RRGGBB] - Show or set the background color.',
         }
 
         for _, line in ipairs(help) do
@@ -480,6 +525,7 @@ ashita.events.register('command', 'fishinginfo_command', function (e)
     log('Unknown command. Use /fi help')
 end)
 
+--> Fishing info detection <--
 ashita.events.register('text_in', 'fishinginfo_text_in', function (e)
     if e.injected == true then
         return
@@ -533,6 +579,7 @@ ashita.events.register('text_in', 'fishinginfo_text_in', function (e)
     end
 end)
 
+--> Outgoing /fish detection <--
 ashita.events.register('text_out', 'fishinginfo_text_out', function (e)
     if e.injected == true then
         return
@@ -540,7 +587,7 @@ ashita.events.register('text_out', 'fishinginfo_text_out', function (e)
 
     local message = e.message:lower()
     if message == '/fish' or string.sub(message, 1, 6) == '/fish ' then
-                if state.Active == true then
+        if state.Active == true then
             begin_visual_fade()
         elseif state.FadePending ~= true then
             clear_display()
@@ -548,6 +595,7 @@ ashita.events.register('text_out', 'fishinginfo_text_out', function (e)
     end
 end)
 
+--> FishAid packet logic <--
 ashita.events.register('packet_in', 'fishinginfo_packet_in', function (e)
     if e.id == 0x00A then
         clear_display()
@@ -558,9 +606,9 @@ ashita.events.register('packet_in', 'fishinginfo_packet_in', function (e)
         if e.size >= 0x31 then
             local status = struct.unpack('B', e.data, 0x30 + 1)
             if status == 0 then
-                if state.Active == true then
+                if state.Active then
                     begin_visual_fade()
-                elseif state.FadePending ~= true then
+                elseif state.FadePending then
                     clear_display()
                 end
             end
@@ -569,19 +617,29 @@ ashita.events.register('packet_in', 'fishinginfo_packet_in', function (e)
     end
 end)
 
+--> Rendering <--
 ashita.events.register('d3d_present', 'fishinginfo_present', function ()
     if state.Font == nil then
         return
     end
 
-    local x = state.Font.position_x or 0
-    local y = state.Font.position_y or 0
-    if state.Settings.UI.Position[1] ~= x or state.Settings.UI.Position[2] ~= y then
-        state.Settings.UI.Position[1] = x
-        state.Settings.UI.Position[2] = y
-        settings.save()
+    --> Drag to move delayed save settings <--
+    if state.LastVisible == true then
+        local x = state.Font.position_x or 0
+        local y = state.Font.position_y or 0
+        if state.Settings.UI.Position[1] ~= x or state.Settings.UI.Position[2] ~= y then
+            state.Settings.UI.Position[1] = x
+            state.Settings.UI.Position[2] = y
+            state.SaveTimer = now() + 0.5
+        end
     end
 
+    if state.SaveTimer ~= nil and now() > state.SaveTimer then
+        settings.save()
+        state.SaveTimer = nil
+    end
+	
+	--> Current frame overlay visibility <--
     local shouldShow = state.Settings.Visibility == true
     local alpha = 255
 
@@ -601,7 +659,7 @@ ashita.events.register('d3d_present', 'fishinginfo_present', function ()
                 shouldShow = false
             else
                 local progress = (t - state.FadeStartTime) / (state.FadeEndTime - state.FadeStartTime)
-                alpha = math.floor((1.0 - clamp(progress, 0.0, 1.0)) * 255)
+                alpha = clamp(math.floor((1.0 - progress) * 255), 0, 255)
             end
         elseif state.Settings.HideWhenInactive == true then
             shouldShow = false
@@ -609,29 +667,62 @@ ashita.events.register('d3d_present', 'fishinginfo_present', function ()
             alpha = 255
         end
     end
-
+	
+	--> Hide UI if not showing <--
     if shouldShow ~= true then
-        state.Font.visible = false
-        state.Font.text = ''
-        set_font_background(hex_to_uint(scale_color_alpha(get_background_color(), 0), '00000000'), false)
+        if state.LastVisible ~= false then
+            state.Font.visible = false
+            set_font_background(0x00000000, false)
+            state.LastVisible = false
+            state.LastAlpha = nil
+            state.LastFish = nil
+            state.LastFishColor = nil
+            state.LastFeeling = nil
+            state.LastFeelingColor = nil
+        end
         return
     end
 
-    local labelColor = with_alpha('FFFFFFFF', alpha)
-    local fishColor = with_alpha(state.CurrentFishColor or 'FFFFFFFF', alpha)
-    local feelingColor = with_alpha(state.CurrentFeelingColor or 'FFFFFFFF', alpha)
-    local backgroundColor = hex_to_uint(scale_color_alpha(get_background_color(), alpha), '00000000')
+    local fish = state.CurrentFish or ''
+    local fishColorRaw = state.CurrentFishColor or 'FFFFFFFF'
+    local feeling = state.CurrentFeeling or ''
+    local feelingColorRaw = state.CurrentFeelingColor or 'FFFFFFFF'
+	--> Update background if needed <--
+    if state.LastVisible ~= true or state.LastAlpha ~= alpha or state.LastBackgroundColor == nil then
+        local backgroundColor = get_background_uint_for_alpha(alpha)
+        set_font_background(backgroundColor, alpha > 0)
+    end
+	
+	--> Check if anything changed <--
+    local changed =
+        state.LastVisible ~= true or
+        state.LastAlpha ~= alpha or
+        state.LastFish ~= fish or
+        state.LastFishColor ~= fishColorRaw or
+        state.LastFeeling ~= feeling or
+        state.LastFeelingColor ~= feelingColorRaw
 
-    set_font_background(backgroundColor, alpha > 0)
+    if changed then
+        local labelColor   = with_alpha('FFFFFFFF', alpha)
+        local fishColor    = with_alpha(fishColorRaw, alpha)
+        local feelingColor = with_alpha(feelingColorRaw, alpha)
 
-    state.Font.visible = true
-    state.Font.text = string.format(
-        '|c%s|Fish:|r |c%s|%s|r\n|c%s|Feeling:|r |c%s|%s|r',
-        labelColor,
-        fishColor,
-        state.CurrentFish or '',
-        labelColor,
-        feelingColor,
-        state.CurrentFeeling or ''
-    )
+        state.Font.visible = true
+        state.Font.text = string.format(
+            '|c%s|Fish:|r |c%s|%s|r\n|c%s|Feeling:|r |c%s|%s|r',
+            labelColor,
+            fishColor,
+            fish,
+            labelColor,
+            feelingColor,
+            feeling
+        )
+		--> Update caches <--
+        state.LastVisible = true
+        state.LastAlpha = alpha
+        state.LastFish = fish
+        state.LastFishColor = fishColorRaw
+        state.LastFeeling = feeling
+        state.LastFeelingColor = feelingColorRaw
+    end
 end)
