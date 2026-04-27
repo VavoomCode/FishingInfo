@@ -18,7 +18,7 @@ Due to Ashita V4 changes settings.json is now in /config/addons/fishinginfo/ and
 
 Changed default visibility to be enabled as HideInactive is enabled by default.
 
-Shift + drag to move or /fi pos x y/.
+Shift + drag to move or /fi pos x y.
 
 # Commands
 ``` 
