@@ -1,8 +1,7 @@
 # Fishing Info
 Displays info about the current fish you're reeling in.
 
-Addon made by for Wings private server with ashita by InnLumin.
-Updated by Vavoom for Ashita V4.XX.
+Addon made by for Wings private server with ashita by InnLumin, updated by Vavoom for Ashita V4.XX.
 
 # Images
 ![](images/Picture1.png)
@@ -15,9 +14,11 @@ Updated by Vavoom for Ashita V4.XX.
 3. In game do `/addon load fishinginfo` then `/fi`
 
 # About updates
-Due to Ashita V4 changes settings.json is now in /config/addons/fishinginfo/ and generated on first run
-Changed default visibility to be enabled as HideInactive is enabled by default
-Shift + drag to move or /fi pos x y
+Due to Ashita V4 changes settings.json is now in /config/addons/fishinginfo/ and generated on first run.
+
+Changed default visibility to be enabled as HideInactive is enabled by default.
+
+Shift + drag to move or /fi pos x y/.
 
 # Commands
 ``` 
