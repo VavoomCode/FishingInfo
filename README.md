@@ -1,7 +1,7 @@
 # Fishing Info
 Displays info about the current fish you're reeling in.
 
-Addon made by for Wings private server with ashita by InnLumin, updated by Vavoom for Ashita V4.XX.
+Addon made by for Wings private server with ashita by InnLumin, updated by Vavoom for Ashita v4.xx.
 
 # Images
 ![](images/Picture1.png)
