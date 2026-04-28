@@ -1,6 +1,6 @@
 addon.name = 'FishingInfo'
-addon.author = 'InnLumin'
-addon.version = '2.1.0'
+addon.author = 'InnLumin & Vavoom'
+addon.version = '2.2.0'
 addon.desc = 'Displays fishing catch and feeling info with sound alerts for Ashita v4.'
 addon.commands = {'/fishinginfo', '/fi'};
 
@@ -55,7 +55,7 @@ local state = {
     FadeStartTime = 0,
     FadeEndTime = 0,
 	
-    -- Render caches to reduce redundant Font UI allocations
+    -- Render caches for font & background
     CachedBackgroundColor = nil,
     LastBackgroundColor = nil,
     LastBackgroundVisible = nil,
@@ -687,6 +687,7 @@ ashita.events.register('d3d_present', 'fishinginfo_present', function ()
     local fishColorRaw = state.CurrentFishColor or 'FFFFFFFF'
     local feeling = state.CurrentFeeling or ''
     local feelingColorRaw = state.CurrentFeelingColor or 'FFFFFFFF'
+	
 	--> Update background if needed <--
     if state.LastVisible ~= true or state.LastAlpha ~= alpha or state.LastBackgroundColor == nil then
         local backgroundColor = get_background_uint_for_alpha(alpha)
@@ -701,13 +702,22 @@ ashita.events.register('d3d_present', 'fishinginfo_present', function ()
         state.LastFishColor ~= fishColorRaw or
         state.LastFeeling ~= feeling or
         state.LastFeelingColor ~= feelingColorRaw
-
+		
     if changed then
         local labelColor   = with_alpha('FFFFFFFF', alpha)
         local fishColor    = with_alpha(fishColorRaw, alpha)
         local feelingColor = with_alpha(feelingColorRaw, alpha)
-
+		
         state.Font.visible = true
+		
+        if state.Settings.HideWhenInactive == true and fish ~= '' and feeling == '' then
+        state.Font.text = string.format(
+            '|c%s|Fish:|r |c%s|%s|r',
+            labelColor,
+            fishColor,
+            fish
+        )
+    else
         state.Font.text = string.format(
             '|c%s|Fish:|r |c%s|%s|r\n|c%s|Feeling:|r |c%s|%s|r',
             labelColor,
@@ -717,6 +727,8 @@ ashita.events.register('d3d_present', 'fishinginfo_present', function ()
             feelingColor,
             feeling
         )
+    end
+		
 		--> Update caches <--
         state.LastVisible = true
         state.LastAlpha = alpha
